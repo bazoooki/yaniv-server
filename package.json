@@ -1,34 +1,24 @@
 {
-  "name": "yaniv-game",
-  "version": "1.0.0",
-  "description": "yaniv card game v1.0",
-  "main": "server.ts",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "type": "module",
-  "author": "",
-  "license": "ISC",
-  "compilerOptions": {
-    "module": "ESNext",
-    "target": "ES2020",
-    "moduleResolution": "node",
-    "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true,
-    "resolveJsonModule": true,
-    "skipLibCheck": true
-  },
-  "dependencies": {
-    "express": "^5.1.0",
-    "socket.io": "^4.8.1",
-    "socket.io-client": "^4.8.1"
-  },
-  "devDependencies": {
-    "@types/express": "^5.0.1",
-    "@types/node": "^22.14.0",
-    "@types/socket.io": "^3.0.1",
-    "@types/socket.io-client": "^1.4.36",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.8.3"
-  }
+    "scripts": {
+        "build": "tsc",
+        "start": "node dist/server.js",
+        "dev": "nodemon --watch 'src/**/*.ts' --exec 'ts-node' src/server.ts",
+        "lint": "eslint 'src/**/*.ts'"
+    },
+    "dependencies": {
+        "socket.io": "^4.8.1"
+    },
+    "devDependencies": {
+        "@types/express": "^5.0.1",
+        "@types/node": "^22.14.0",
+        "dotenv": "^16.5.0",
+        "eslint": "^9.24.0",
+        "express": "^5.1.0",
+        "install": "^0.13.0",
+        "nodemon": "^3.1.9",
+        "npm": "^11.3.0",
+        "prettier": "^3.5.3",
+        "ts-node": "^10.9.2",
+        "typescript": "^5.8.3"
+    }
 }
