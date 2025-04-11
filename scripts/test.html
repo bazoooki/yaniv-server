@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+  <head><title>Socket.IO Test</title></head>
+  <body>
+    <h1>Socket.IO Client</h1>
+    <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+    <script>
+      const socket = io("http://localhost:8080");
+
+      socket.on("connect", () => {
+        console.log("✅ Connected", socket.id);
+
+        socket.emit("createRoom", {
+          roomId: "web-client-room",
+          player: { id: "web1", name: "Browser Tester", hand: [], score: 0 }
+        });
+
+        socket.emit("sendMessage", {
+          roomId: "web-client-room",
+          sender: "Browser Tester",
+          text: "Hello from browser!",
+        });
+      });
+
+      socket.on("receiveMessage", (msg) => {
+        console.log("💬", msg);
+      });
+    </script>
+  </body>
+</html>
