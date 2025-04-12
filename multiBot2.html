@@ -129,7 +129,9 @@
       player.name = "🤖 " + id;
       document.getElementById("botId").innerText = player.id;
 
-      socket = io("http://localhost:8080");
+      socket = io("https://yaniv-server.onrender.com", {
+        transports: ["websocket"]
+      });
 
       socket.on("connect", () => {
         log("🔌", player.name, "Connected");
