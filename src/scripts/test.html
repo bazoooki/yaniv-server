@@ -7,6 +7,7 @@
     <script>
       const socket = io("http://localhost:8080");
 
+      //
       socket.on("connect", () => {
         console.log("✅ Connected", socket.id);
 
