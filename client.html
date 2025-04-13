@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Yaniv Human Client</title>
+  <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+  <style>
+    body {
+      font-family: monospace;
+      padding: 20px;
+      background: #f0f0f0;
+    }
+
+    #log {
+      background: #fff;
+      border: 1px solid #ccc;
+      padding: 10px;
+      height: 300px;
+      overflow-y: auto;
+      font-size: 14px;
+    }
+
+    #chat {
+      margin-top: 10px;
+    }
+
+    .card {
+      display: inline-block;
+      margin: 4px;
+      padding: 8px 12px;
+      background: #eef;
+      border: 1px solid #88a;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .card.selected {
+      background: #cfc;
+      border-color: #393;
+    }
+
+    .card.disabled {
+      background: #eee;
+      color: #999;
+      border-color: #ccc;
+      cursor: not-allowed;
+    }
+
+    .pile {
+      display: inline-block;
+      width: 80px;
+      height: 100px;
+      text-align: center;
+      line-height: 100px;
+      margin: 10px;
+      font-weight: bold;
+      font-size: 18px;
+      border: 2px dashed #888;
+      cursor: pointer;
+      background: #eee;
+    }
+
+    .pile:hover {
+      background: #ddd;
+    }
+
+    #status {
+      font-weight: bold;
+    }
+
+    #chipsDisplay {
+      font-size: 16px;
+      margin-bottom: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h2>🃏 Yaniv Human Client</h2>
+
+  <input id="botIdInput" readonly />
+  <button onclick="startClient()">Start Client</button><br/><br/>
+
+  <select id="roomSelector"></select>
+  <button onclick="joinSelectedRoom()">Join Selected Room</button>
+  <button id="declareYanivBtn" onclick="declareYaniv()" style="display:none;">Declare YANIV</button>
+
+  <p id="status">Not connected</p>
+  <p id="chipsDisplay">💰 Chips: 0</p>
+  <p><strong>Points in Hand:</strong> <span id="handPoints">0</span></p>
+
+  <div id="handContainer"></div>
+
+  <div>
+    <div class="pile" id="drawDiscardBtn" onclick="drawFrom('discard')">Discard</div>
+    <div class="pile" id="drawDeckBtn" onclick="drawFrom('deck')">Deck</div>
+  </div>
+
+  <div id="log"></div>
+
+  <div id="chat">
+    <input id="chatInput" placeholder="Type a message..." />
+    <button onclick="sendChat()">Send</button>
+  </div>
+
+  <script>
+    let socket;
+    let player = { id: "", name: "", hand: [], score: 0, chips: 0 };
+    let roomId = "";
+    let myTurn = false;
+    let selectedCards = [];
+    let discardTop = null;
+    const VALUE_ORDER = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
+    const NAMES = ["Paul", "Maya", "Liam", "Olivia", "David", "Emma", "Noah", "Ava", "Leo", "Isla"];
+
+    function log(msg) {
+      const time = new Date().toLocaleTimeString();
+      document.getElementById("log").innerHTML += `<div>[${time}] ${msg}</div>`;
+      document.getElementById("log").scrollTop = document.getElementById("log").scrollHeight;
+    }
+
+    function formatCard(c) {
+      if (!c) return "";
+      if (c.value === "Joker") return `<span style='color:purple;font-weight:bold'>🃏 Joker</span>`;
+      const color = c.suit === "♥" || c.suit === "♦" ? "red" : "black";
+      return `<span style='color:${color}'>${c.value}${c.suit}</span>`;
+    }
+
+    function cardValue(c) {
+      if (c.value === "A") return 1;
+      if (["J", "Q", "K"].includes(c.value)) return 10;
+      if (c.value === "Joker") return 0;
+      return parseInt(c.value);
+    }
+
+    function isValidSet(cards) {
+      return cards.length > 1 && cards.every(c => c.value === cards[0].value);
+    }
+
+    function isValidSequence(cards) {
+      if (cards.length < 3) return false;
+      const suit = cards[0].suit;
+      const sorted = [...cards].sort((a, b) => VALUE_ORDER.indexOf(a.value) - VALUE_ORDER.indexOf(b.value));
+      return sorted.every((c, i) => i === 0 || VALUE_ORDER.indexOf(c.value) === VALUE_ORDER.indexOf(sorted[i - 1].value) + 1)
+          && cards.every(c => c.suit === suit);
+    }
+
+    function updateHandUI() {
+      const container = document.getElementById("handContainer");
+      container.innerHTML = "";
+      const total = player.hand.reduce((sum, c) => sum + cardValue(c), 0);
+      document.getElementById("handPoints").innerText = total;
+      document.getElementById("chipsDisplay").innerText = `💰 Chips: ${player.chips}`;
+
+      player.hand.forEach((card, i) => {
+        const btn = document.createElement("div");
+        btn.className = "card";
+        btn.innerHTML = formatCard(card);
+        if (selectedCards.includes(i)) btn.classList.add("selected");
+
+        btn.onclick = () => {
+          if (!myTurn) return;
+          if (selectedCards.includes(i)) {
+            selectedCards = selectedCards.filter(idx => idx !== i);
+          } else {
+            const hypothetical = [...selectedCards, i].map(idx => player.hand[idx]);
+            if (selectedCards.length === 0 || isValidSet(hypothetical) || isValidSequence(hypothetical)) {
+              selectedCards.push(i);
+            }
+          }
+          updateHandUI();
+        };
+
+        if (selectedCards.length > 0 && !selectedCards.includes(i)) {
+          const hypothetical = [...selectedCards, i].map(idx => player.hand[idx]);
+          if (!(isValidSet(hypothetical) || isValidSequence(hypothetical))) {
+            btn.classList.add("disabled");
+          }
+        }
+
+        container.appendChild(btn);
+      });
+    }
+
+    function drawFrom(source) {
+      if (!myTurn || selectedCards.length === 0) return;
+      const discard = selectedCards.map(idx => player.hand[idx]);
+      socket.emit("playerMove", {
+        roomId,
+        playerId: player.id,
+        discard,
+        drawSource: source
+      });
+      selectedCards = [];
+      updateHandUI();
+    }
+
+    function declareYaniv() {
+      socket.emit("declareYaniv", { roomId, playerId: player.id });
+      log("🃏 You declared YANIV!");
+    }
+
+    function startClient() {
+      const name = NAMES[Math.floor(Math.random() * NAMES.length)] + Math.floor(Math.random() * 100);
+      player.id = name;
+      player.name = name;
+      document.getElementById("botIdInput").value = name;
+      socket = io("http://localhost:8080", { query: { playerId: player.id } });
+
+      socket.on("connect", () => {
+        log("🔌 Connected");
+        socket.emit("requestAvailableRooms", {}, ({ rooms }) => {
+          const sel = document.getElementById("roomSelector");
+          sel.innerHTML = rooms.map(r => `<option value="${r.id}">${r.id} (${r.minChips}💰)</option>`).join("");
+        });
+      });
+
+      socket.on("gameStarted", ({ players, discardTop: top }) => {
+        const me = players.find(p => p.id === player.id);
+        if (me) {
+          player.hand = me.hand;
+          discardTop = top;
+          updateHandUI();
+          log("🎲 Game started");
+        }
+      });
+
+      socket.on("playerTurn", ({ playerId }) => {
+        myTurn = playerId === player.id;
+        document.getElementById("status").innerText = myTurn ? "🟢 Your turn!" : "Waiting...";
+        updateHandUI();
+      });
+
+      socket.on("playerMoved", ({ playerId: pid, discard, hand, drawnCard }) => {
+        if (pid === player.id) {
+          player.hand = hand;
+          updateHandUI();
+          log(`📥 You drew ${formatCard(drawnCard)}`);
+        } else {
+          log(`📢 ${pid} discarded: ${discard.map(formatCard).join(" ")}`);
+        }
+      });
+
+      socket.on("playerJoined", ({ players }) => {
+        log(`👥 Players: ${players.map(p => p.name).join(", ")}`);
+      });
+
+      socket.on("playerStateUpdate", (states) => {
+        const me = states.find(p => p.id === player.id);
+        if (me) {
+          player.chips = me.chips;
+          player.score = me.score;
+          updateHandUI();
+        }
+      });
+
+      socket.on("countdownToStart", ({ seconds }) => {
+        log(`⏳ Game will start in ${seconds}s...`);
+      });
+
+      socket.on("roundCountdown", ({ seconds }) => {
+        log(`🔄 Next round in ${seconds}s...`);
+      });
+
+      socket.on("yanivDeclared", ({ result, scores, chipResults }) => {
+        log(`🏁 YANIV RESULT: ${result.toUpperCase()}`);
+        for (const [id, delta] of Object.entries(chipResults)) {
+          log(`💸 ${id}: ${delta > 0 ? "+" : ""}${delta}💰`);
+        }
+        for (const [id, score] of Object.entries(scores)) {
+          log(`📊 ${id}: ${score} pts`);
+        }
+      });
+
+      socket.on("chatMessage", ({ from, message }) => {
+        log(`💬 ${from}: ${message}`);
+      });
+    }
+
+    function sendChat() {
+      const msg = document.getElementById("chatInput").value;
+      if (!msg.trim()) return;
+      socket.emit("chatMessage", { roomId, from: player.name, message: msg });
+      document.getElementById("chatInput").value = "";
+    }
+
+    function joinSelectedRoom() {
+      const sel = document.getElementById("roomSelector");
+      roomId = sel.value;
+      socket.emit("joinRoom", { roomId, player });
+      setTimeout(() => {
+        socket.emit("playerReady", { roomId, playerId: player.id });
+        log("✅ Joined room and marked ready");
+      }, 500);
+    }
+  </script>
+</body>
+</html>

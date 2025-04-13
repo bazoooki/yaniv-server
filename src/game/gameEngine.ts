@@ -116,17 +116,41 @@ export type Card = {
       return true;
     }
   
-    performMove(playerId: string, discard: Card[]): Card | null {
-      const player = this.players.find(p => p.id === playerId);
-      if (!player || !this.roundActive) return null;
-      const discarded = this.discardCards(player, discard);
-      if (!discarded) return null;
-  
-      const drawnCard = this.drawCard();
-      if (drawnCard) player.hand.push(drawnCard);
-  
-      return drawnCard;
-    }
+    performMove(playerId: string, discard: Card[], drawSource: 'deck' | 'discard' = 'deck'): Card | null {
+        const player = this.players.find(p => p.id === playerId);
+        if (!player || !this.roundActive) return null;
+      
+        // Validate discard
+        const discarded = this.isValidDiscard(discard, player.hand);
+        if (!discarded) return null;
+      
+        // Remove discard from hand (but don't push to discardPile yet)
+        for (const card of discard) {
+          const idx = player.hand.findIndex(c => c.suit === card.suit && c.value === card.value);
+          if (idx !== -1) player.hand.splice(idx, 1);
+        }
+      
+        let drawnCard: Card | null = null;
+      
+        if (drawSource === 'deck') {
+          drawnCard = this.drawCard();
+        } else if (drawSource === 'discard') {
+          // Draw BEFORE pushing the discard set
+          drawnCard = this.discardPile.pop() || null;
+        }
+      
+        // Now push the discarded cards
+        this.discardPile.push(...discard);
+        this.lastDiscardSet = [...discard];
+      
+        if (drawnCard) {
+          player.hand.push(drawnCard);
+        }
+      
+        return drawnCard;
+      }
+      
+      
     declareYaniv(
         callerId: string,
         multiplier: number
