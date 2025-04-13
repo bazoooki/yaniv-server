@@ -9,14 +9,15 @@
     #log { background: #fff; border: 1px solid #ccc; padding: 10px; height: 500px; overflow-y: auto; font-size: 14px; }
     .card { display: inline-block; margin: 2px; padding: 6px 10px; background: #eef; border: 1px solid #88a; border-radius: 4px; }
     #countdown { font-size: 16px; color: #a00; font-weight: bold; margin-top: 10px; }
-    input, button { margin-top: 10px; padding: 6px; }
+    input, button, select { margin-top: 10px; padding: 6px; }
   </style>
 </head>
 <body>
   <h1>🃏 Yaniv Smart Multi-Bot</h1>
-  <input id="roomIdInput" placeholder="Room ID" value="visual-room" />
-  <input id="botIdInput" placeholder="Bot ID (e.g., bot1)" />
-  <button onclick="startBot()">Start Bot</button>
+  <input id="botIdInput" placeholder="Bot ID" readonly />
+  <button onclick="startBot()">Start Bot</button><br/>
+  <select id="roomSelector"></select>
+  <button onclick="joinSelectedRoom()">Join Selected Room</button>
 
   <p><strong>Bot ID:</strong> <span id="botId"></span></p>
   <p><strong>Hand:</strong> <span id="hand"></span></p>
@@ -25,13 +26,9 @@
 
   <script>
     let socket;
-    let roundEnded = false;
-    let drawTimeout = null;
-    let moveCounter = 0;
-    let lastDiscardSet = [];
-    
-    let currentPlayers = [];
+    let roomId = "";
     let myTurn = false;
+    let roundEnded = false;
 
     const VALUE_ORDER = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
     const player = { id: "", name: "", hand: [], score: 0 };
@@ -44,33 +41,25 @@
     };
 
     const renderHand = () => {
-      document.getElementById("hand").innerHTML =
-        player.hand.map(c => {
-          const isRed = c.suit === "♥" || c.suit === "♦";
-          return `<span class="card" style="color:${isRed ? 'red' : 'black'}">${c.value}${c.suit}</span>`;
-        }).join(" ");
+      document.getElementById("hand").innerHTML = player.hand.map(c => {
+        const isRed = c.suit === "♥" || c.suit === "♦";
+        return `<span class="card" style="color:${isRed ? 'red' : 'black'}">${c.value}${c.suit}</span>`;
+      }).join(" ");
     };
 
     const formatCard = (c) => {
-        if (c.value === "Joker") return `<span style='color:purple;font-weight:bold'>🃏 Joker</span>`;
-        const color = c.suit === "♥" || c.suit === "♦" ? "red" : "black";
-        return `<span style='color:${color}'>${c.value}${c.suit}</span>`;
+      if (c.value === "Joker") return `<span style='color:purple;font-weight:bold'>🃏 Joker</span>`;
+      const color = c.suit === "♥" || c.suit === "♦" ? "red" : "black";
+      return `<span style='color:${color}'>${c.value}${c.suit}</span>`;
     };
 
-    const logPlayerStates = () => {
-        const summary = currentPlayers.map(p => {
-            return `${p.name || p.id}:[${p.handSize ?? "?"}C]-[${p.score ?? 0}P]`;
-        }).join(", ");
-        log("📊 Game: ", summary);
-    };
-
-    const cardValue = (v) => v === "A" ? 1 : ["J", "Q", "K"].includes(v) ? 10 : parseInt(v, 10);
+    const cardValue = (v) => v === "A" ? 1 : ["J", "Q", "K"].includes(v) ? 10 : parseInt(v);
 
     const findSet = (hand) => {
       const grouped = {};
-      for (let card of hand) {
-        if (!grouped[card.value]) grouped[card.value] = [];
-        grouped[card.value].push(card);
+      for (let c of hand) {
+        if (!grouped[c.value]) grouped[c.value] = [];
+        grouped[c.value].push(c);
       }
       const sets = Object.values(grouped).filter(g => g.length >= 2);
       return sets.length ? sets.sort((a, b) => b.length - a.length)[0] : null;
@@ -78,22 +67,23 @@
 
     const findSequence = (hand) => {
       const suitGroups = {};
-      hand.forEach(card => {
-        if (!suitGroups[card.suit]) suitGroups[card.suit] = [];
-        suitGroups[card.suit].push(card);
-      });
+      for (let c of hand) {
+        if (!suitGroups[c.suit]) suitGroups[c.suit] = [];
+        suitGroups[c.suit].push(c);
+      }
+
       for (let suit in suitGroups) {
         const cards = suitGroups[suit].sort((a, b) =>
           VALUE_ORDER.indexOf(a.value) - VALUE_ORDER.indexOf(b.value)
         );
-        for (let i = 0; i < cards.length - 1; i++) {
+
+        for (let i = 0; i <= cards.length - 3; i++) {
           const seq = [cards[i]];
           for (let j = i + 1; j < cards.length; j++) {
             const prev = VALUE_ORDER.indexOf(seq.at(-1).value);
             const next = VALUE_ORDER.indexOf(cards[j].value);
-            if (next === prev + 1) {
-              seq.push(cards[j]);
-            } else break;
+            if (next === prev + 1) seq.push(cards[j]);
+            else if (next > prev + 1) break;
           }
           if (seq.length >= 3) return seq;
         }
@@ -118,125 +108,95 @@
       }, 1000);
     };
 
-    const clearCountdown = () => {
-      document.getElementById("countdown").innerText = "";
-    };
-
-    function startBot() {
-      const id = document.getElementById("botIdInput").value || "bot1";
-      const roomId = document.getElementById("roomIdInput").value || "visual-room";
+    const startBot = () => {
+      const id = "bot" + Math.floor(Math.random() * 1000);
       player.id = id;
       player.name = "🤖 " + id;
-      document.getElementById("botId").innerText = player.id;
+      document.getElementById("botIdInput").value = id;
+      document.getElementById("botId").innerText = id;
 
-      socket = io("https://yaniv-server.onrender.com", {
-        transports: ["websocket"]
-      });
+      socket = io("http://localhost:8080");
 
       socket.on("connect", () => {
         log("🔌", player.name, "Connected");
-        socket.emit("joinRoom", { roomId, player });
-        setTimeout(() => {
-          socket.emit("playerReady", { roomId, playerId: player.id });
-          log("✅", player.name, "Marked as ready");
-        }, 500);
+        socket.emit("requestAvailableRooms", {}, ({ rooms }) => {
+          log("📦", "System", `Available rooms: ${rooms.join(", ")}`);
+          const selector = document.getElementById("roomSelector");
+          selector.innerHTML = rooms.map(r => `<option value="${r}">${r}</option>`).join("");
+          const customRoom = `room-${Math.floor(Math.random() * 1000)}`;
+          const option = new Option(`(Create new) ${customRoom}`, customRoom);
+          selector.add(option);
+        });
       });
 
       socket.on("gameStarted", ({ players }) => {
-        roundEnded = false;
-        
-        moveCounter = 0;
-        currentPlayers = players;
-        clearCountdown();
         const me = players.find(p => p.id === player.id);
-        if (me) {
-          player.hand = me.hand || [];
-          log("🎲", player.name, "New round started!");
+        if (me && me.hand) {
+          player.hand = me.hand;
           renderHand();
-          logPlayerStates();
+          roundEnded = false;
+          log("🎲", player.name, `Game started in ${roomId}`);
         }
       });
 
       socket.on("playerTurn", ({ playerId }) => {
-        myTurn = player.id === playerId;
-        log("🟢 ---", playerId, "turn! " + myTurn);
+        myTurn = playerId === player.id;
+        log("🟢", player.name, myTurn ? "My turn!" : `${playerId}'s turn`);
+        if (!myTurn || !player.hand.length) return;
 
-        if (!myTurn || !Array.isArray(player.hand) || player.hand.length === 0) return;
+        const total = player.hand.reduce((sum, c) => sum + cardValue(c.value), 0);
+        if (total <= 5) {
+          roundEnded = true;
+          socket.emit("declareYaniv", { roomId, playerId: player.id });
+          log("🃏", player.name, `Declaring YANIV! (${total})`);
+          return;
+        }
 
-     
-          const total = player.hand.reduce((sum, c) => sum + cardValue(c.value), 0);
-          if (total <= 5) {
-            roundEnded = true;
-            log("🃏", player.name, `Declaring YANIV! (${total})`);
-            socket.emit("declareYaniv", { roomId, playerId: player.id });
-            return;
-          }
-        
+        const discard = findSet(player.hand) || findSequence(player.hand) || fallbackCard(player.hand);
+        if (!discard || !discard.length) return log("⚠️", player.name, "No valid discard");
 
-        setTimeout(() => {
-          if (roundEnded || !myTurn) return;
+        log("📥", player.name, "Current hand: " + JSON.stringify(player.hand));
+        log("🗑️", player.name, `Discarding: ${discard.map(formatCard).join(" ")}`);
 
-          const discard = findSet(player.hand) || findSequence(player.hand) || fallbackCard(player.hand);
-          if (!discard || !discard.length) return;
-
-          player.hand = player.hand.filter(c =>
-            !discard.find(d => d.value === c.value && d.suit === c.suit)
-          );
-
-          moveCounter++;
-          const actionLog = `#${moveCounter} Discarded: ${discard.map(formatCard).join(" ")} `;
-          log("🗑️", player.name, actionLog);
-
-          socket.emit("playerAction", { roomId, playerId: player.id, discard });
-
-          if (roundEnded || player.hand.length === 0) return;
-          socket.emit("drawCard", { roomId, playerId: player.id });
-        }, 500);
+        socket.emit("playerMove", {
+          roomId,
+          playerId: player.id,
+          discard
+        });
       });
 
-      socket.on("cardDrawn", ({ playerId, card, hand }) => {
-        if (playerId === player.id) {
+      socket.on("playerMoved", ({ playerId: pId, discard, hand, drawnCard }) => {
+        if (pId === player.id) {
           player.hand = hand;
-          
           renderHand();
-          const color = card.suit === "♥" || card.suit === "♦" ? "red" : "black";
-          log("📤", player.name, `Drew <span style='color:${color}'>${card.value}${card.suit}</span> → Remaining: ${player.hand.map(formatCard).join(" ")}`);
-          logPlayerStates();
-          
+          log("📢", player.name, `Drew ${formatCard(drawnCard)}`);
+        } else {
+          log("📢", pId, `discarded: ${discard.map(formatCard).join(" ")}`);
         }
       });
-
-      socket.on("playerDiscarded", ({ playerId, discard }) => {
-        if (playerId !== player.id) {
-          log("📢", playerId, `discarded: ${discard.map(formatCard).join(" ")}`);
-        }
-      });
-
 
       socket.on("yanivDeclared", (result) => {
         roundEnded = true;
-        if (drawTimeout) clearTimeout(drawTimeout);
-        log("🏁", "Result", JSON.stringify(result));
-      });
-      socket.on("playerStateUpdate", (players) => {
-        currentPlayers = players;
-        logPlayerStates();
-      });
-      socket.on("roundCountdown", ({ seconds }) => {
-        log("🔄", "System", `Next round in ${seconds} seconds`);
-        showCountdown(seconds);
+        log("🏁", "Game", JSON.stringify(result));
       });
 
-      socket.on("receiveMessage", (msg) => {
-        log("💬", msg.sender, msg.text);
-      });
+      socket.on("roundCountdown", ({ seconds }) => showCountdown(seconds));
+      socket.on("waitingForPlayers", ({ roomId }) => log("⏳", "System", `Waiting for players in ${roomId}`));
+      socket.on("countdownToStart", ({ seconds }) => showCountdown(seconds));
+    };
 
-      socket.on("restoreState", (state) => {
-        log("🔁", player.name, "Restored state after reconnect");
-        player.hand = state.player.hand || [];
-        renderHand();
-      });
-    }
+    const joinSelectedRoom = () => {
+      const selector = document.getElementById("roomSelector");
+      roomId = selector.value;
+      if (!roomId) return log("⚠️", "System", "Please select a room.");
+      socket.emit("joinRoom", { roomId, player });
+      setTimeout(() => {
+        socket.emit("playerReady", { roomId, playerId: player.id });
+        log("✅", player.name, "Marked as ready");
+      }, 500);
+    };
+
+    window.onload = startBot;
   </script>
 </body>
 </html>
