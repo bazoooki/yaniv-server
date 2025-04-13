@@ -1,7 +1,11 @@
 import { GameEngine, Player } from "./gameEngine";
 import { Server } from "socket.io";
 
-export type GameInstance = {
+type GameMode = "classic" | "fast";
+
+type GameInstance = {
+  mode: GameMode;
+  multiplier: number; // for fast mode: 1, 2, etc.
   players: Player[];
   engine: GameEngine;
   hasDeclaredYaniv: boolean;
@@ -11,25 +15,38 @@ export type GameInstance = {
 export class GameManager {
   private static games: Map<string, GameInstance> = new Map();
 
-  static createGame(roomId: string, players: Player[], io: Server) {
+  static createGame(
+    roomId: string,
+    players: Player[],
+    io: Server,
+    config: { mode?: "classic" | "fast"; multiplier?: number } = {}
+  ) {
     const engine = new GameEngine(players);
     this.games.set(roomId, {
-      players,
-      engine,
-      hasDeclaredYaniv: false,
-      io, 
+        players,
+        engine,
+        hasDeclaredYaniv: false,
+        io,
+        mode: config.mode || "classic",
+        multiplier: config.multiplier || 1,
     });
   }
 
 
   static initializeDefaultRooms(io: Server) {
     const defaultRooms = ["room-1", "room-2", "room-3"];
-    for (const roomId of defaultRooms) {
-      if (!this.games.has(roomId)) {
-        this.createGame(roomId, [], io);
-        console.log(`✅ Default room created: ${roomId}`);
-      }
-    }
+    defaultRooms.forEach((roomId,idx) => {
+        if (!this.games.has(roomId)) {
+            this.createGame(roomId, [], io, { mode: "classic", multiplier: idx + 1 });
+            console.log(`✅ Default room created: ${roomId}`);
+        }
+    });
+    // for (const roomId of defaultRooms) {
+    //   if (!this.games.has(roomId)) {
+    //     this.createGame(roomId, [], io, { mode: "classic", multiplier:  });
+    //     console.log(`✅ Default room created: ${roomId}`);
+    //   }
+    // }
   }
 
   

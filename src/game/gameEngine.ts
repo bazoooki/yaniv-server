@@ -7,7 +7,8 @@ export type Card = {
     id: string;
     name: string;
     hand: Card[];
-    score: number;
+    score: number;        // used in classic
+    chips?: number;       // used in fast mode
     ready?: boolean;
   };
   
@@ -126,35 +127,62 @@ export type Card = {
   
       return drawnCard;
     }
-  
-    declareYaniv(callerId: string): { result: string; scores: Record<string, number> } {
-      const caller = this.players.find(p => p.id === callerId);
-      if (!caller) return { result: "invalid", scores: {} };
-  
-      const callerPoints = this.calculatePoints(caller.hand);
-      let asafPlayer: Player | null = null;
-  
-      for (let p of this.players) {
-        if (p.id !== callerId && this.calculatePoints(p.hand) <= callerPoints) {
-          asafPlayer = p;
-          break;
+    declareYaniv(
+        callerId: string,
+        multiplier: number
+      ): {
+        result: "yaniv" | "asaf";
+        scores: Record<string, number>; // total score (classic)
+        chipResults?: Record<string, number>; // change in chips (fast mode)
+      } {
+        const caller = this.players.find((p) => p.id === callerId);
+        if (!caller) return { result: "yaniv", scores: {}, chipResults: {} };
+      
+        const callerPoints = this.calculatePoints(caller.hand);
+        let asafPlayer: Player | null = null;
+      
+        for (let p of this.players) {
+          if (p.id !== callerId && this.calculatePoints(p.hand) <= callerPoints) {
+            asafPlayer = p;
+            break;
+          }
         }
-      }
-  
-      const results: Record<string, number> = {};
-      for (let p of this.players) {
-        const handValue = this.calculatePoints(p.hand);
-        if (p === caller) {
-          p.score += asafPlayer ? handValue + 30 : 0;
-        } else {
-          p.score += p === asafPlayer ? 0 : handValue;
+      
+        const scores: Record<string, number> = {};
+        const chipResults: Record<string, number> = {};
+      
+        for (let p of this.players) {
+          const handValue = this.calculatePoints(p.hand);
+          scores[p.id] = p.score;
+      
+          if (p === caller) {
+            if (asafPlayer) {
+              // Yaniv failed (asaf) — caller gets +30 penalty
+              p.score += handValue + 30;
+              chipResults[p.id] = -30 * multiplier;
+            } else {
+              // Successful Yaniv — no score, others pay
+              chipResults[p.id] = 0;
+            }
+          } else {
+            if (p === asafPlayer) {
+              chipResults[p.id] = 30 * multiplier;
+            } else {
+              p.score += handValue;
+              chipResults[p.id] = -handValue * multiplier;
+            }
+          }
         }
-        results[p.id] = p.score;
+      
+        this.roundActive = false;
+      
+        return {
+          result: asafPlayer ? "asaf" : "yaniv",
+          scores,
+          chipResults,
+        };
       }
-  
-      this.roundActive = false;
-      return { result: asafPlayer ? "asaf" : "yaniv", scores: results };
-    }
+      
   
     calculatePoints(hand: Card[]): number {
       return hand.reduce((sum, c) => {

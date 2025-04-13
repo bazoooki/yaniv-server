@@ -29,28 +29,58 @@
     let roomId = "";
     let myTurn = false;
     let roundEnded = false;
+    let lastChips = {};
+    let lastScores = {};
+    window._allPlayers = [];
 
     const VALUE_ORDER = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
-    const player = { id: "", name: "", hand: [], score: 0 };
+    const player = { id: "", name: "", hand: [], score: 0, chips: 0 };
 
-    const log = (emoji, sender, msg) => {
+    const logRaw = (msg) => {
       const div = document.getElementById("log");
       const time = new Date().toLocaleTimeString();
-      div.innerHTML += `<div>[${time}] ${emoji} <b>${sender}</b>: ${msg}</div>`;
+      div.innerHTML += `<div>[${time}] ${msg}</div>`;
       div.scrollTop = div.scrollHeight;
     };
+
+    const formatCard = (c) => {
+      if (!c) return "";
+      if (c.value === "Joker") return `<span style='color:purple;font-weight:bold'>🃏 Joker</span>`;
+      const color = c.suit === "♥" || c.suit === "♦" ? "red" : "black";
+      return `<span style='color:${color}'>${c.value}${c.suit}</span>`;
+    };
+
+    const formatCardList = (cards) => cards.map(formatCard).join(" ");
+    const formatHand = (hand) => hand.map(formatCard).join(" ");
+
+    const logTurnStart = (player, hand, discard, draw) => {
+      logRaw(`🎯 <b>Turn</b> - ${player.name} (${player.chips}💰 | ${player.score} pts)`);
+      logRaw(`🃏 Hand: ${formatHand(hand)} → <b>Discard:</b> ${formatCardList(discard)} → <b>Draw:</b> ${formatCard(draw)}`);
+    };
+
+    const logYaniv = (caller, type, chipResults, scores) => {
+      logRaw(`🃏 <b>YANIV DECLARED</b> by ${caller.name}`);
+      logRaw(`🏁 Result: <b>${type.toUpperCase()}</b>${type === 'asaf' ? ` (blocked by ${caller.asafBy})` : ''}`);
+      logRaw(`💸 <b>Chip Changes:</b>`);
+      Object.entries(chipResults).forEach(([id, delta]) => {
+        const symbol = delta > 0 ? "+" : "";
+        const final = getPlayer(id)?.chips ?? "?";
+        logRaw(`  - ${id}: ${symbol}${delta} → <b>${final}💰</b>`);
+      });
+
+      logRaw(`📊 <b>Scores:</b>`);
+      Object.entries(scores).forEach(([id, pts]) => {
+        logRaw(`  - ${id}: ${pts} pts`);
+      });
+    };
+
+    const getPlayer = (id) => window._allPlayers?.find(p => p.id === id);
 
     const renderHand = () => {
       document.getElementById("hand").innerHTML = player.hand.map(c => {
         const isRed = c.suit === "♥" || c.suit === "♦";
-        return `<span class="card" style="color:${isRed ? 'red' : 'black'}">${c.value}${c.suit}</span>`;
+        return `<span class="card" style="color:${isRed ? 'red' : 'black'}'>${c.value}${c.suit}</span>`;
       }).join(" ");
-    };
-
-    const formatCard = (c) => {
-      if (c.value === "Joker") return `<span style='color:purple;font-weight:bold'>🃏 Joker</span>`;
-      const color = c.suit === "♥" || c.suit === "♦" ? "red" : "black";
-      return `<span style='color:${color}'>${c.value}${c.suit}</span>`;
     };
 
     const cardValue = (v) => v === "A" ? 1 : ["J", "Q", "K"].includes(v) ? 10 : parseInt(v);
@@ -73,10 +103,7 @@
       }
 
       for (let suit in suitGroups) {
-        const cards = suitGroups[suit].sort((a, b) =>
-          VALUE_ORDER.indexOf(a.value) - VALUE_ORDER.indexOf(b.value)
-        );
-
+        const cards = suitGroups[suit].sort((a, b) => VALUE_ORDER.indexOf(a.value) - VALUE_ORDER.indexOf(b.value));
         for (let i = 0; i <= cards.length - 3; i++) {
           const seq = [cards[i]];
           for (let j = i + 1; j < cards.length; j++) {
@@ -118,11 +145,12 @@
       socket = io("http://localhost:8080");
 
       socket.on("connect", () => {
-        log("🔌", player.name, "Connected");
+        logRaw(`🔌 Connected as ${player.name}`);
         socket.emit("requestAvailableRooms", {}, ({ rooms }) => {
-          log("📦", "System", `Available rooms: ${rooms.join(", ")}`);
           const selector = document.getElementById("roomSelector");
-          selector.innerHTML = rooms.map(r => `<option value="${r}">${r}</option>`).join("");
+          selector.innerHTML = rooms.map(r =>
+            `<option value="${r.id}">${r.id} (min: ${r.minChips} 💰)</option>`
+          ).join("");
           const customRoom = `room-${Math.floor(Math.random() * 1000)}`;
           const option = new Option(`(Create new) ${customRoom}`, customRoom);
           selector.add(option);
@@ -131,68 +159,79 @@
 
       socket.on("gameStarted", ({ players }) => {
         const me = players.find(p => p.id === player.id);
-        if (me && me.hand) {
+        if (me) {
           player.hand = me.hand;
           renderHand();
           roundEnded = false;
-          log("🎲", player.name, `Game started in ${roomId}`);
+          logRaw(`🎲 Game started in ${roomId}`);
         }
       });
 
       socket.on("playerTurn", ({ playerId }) => {
         myTurn = playerId === player.id;
-        log("🟢", player.name, myTurn ? "My turn!" : `${playerId}'s turn`);
         if (!myTurn || !player.hand.length) return;
 
         const total = player.hand.reduce((sum, c) => sum + cardValue(c.value), 0);
         if (total <= 5) {
           roundEnded = true;
           socket.emit("declareYaniv", { roomId, playerId: player.id });
-          log("🃏", player.name, `Declaring YANIV! (${total})`);
+          logRaw(`🃏 YANIV declared (${total})`);
           return;
         }
 
         const discard = findSet(player.hand) || findSequence(player.hand) || fallbackCard(player.hand);
-        if (!discard || !discard.length) return log("⚠️", player.name, "No valid discard");
-
-        log("📥", player.name, "Current hand: " + JSON.stringify(player.hand));
-        log("🗑️", player.name, `Discarding: ${discard.map(formatCard).join(" ")}`);
-
-        socket.emit("playerMove", {
-          roomId,
-          playerId: player.id,
-          discard
-        });
+        socket.emit("playerMove", { roomId, playerId: player.id, discard });
+        window._lastDiscard = discard;
       });
 
       socket.on("playerMoved", ({ playerId: pId, discard, hand, drawnCard }) => {
         if (pId === player.id) {
           player.hand = hand;
           renderHand();
-          log("📢", player.name, `Drew ${formatCard(drawnCard)}`);
+          logTurnStart(player, hand, window._lastDiscard, drawnCard);
         } else {
-          log("📢", pId, `discarded: ${discard.map(formatCard).join(" ")}`);
+          logRaw(`📢 ${pId} discarded: ${formatCardList(discard)}`);
         }
       });
 
       socket.on("yanivDeclared", (result) => {
         roundEnded = true;
-        log("🏁", "Game", JSON.stringify(result));
+        const { result: type, scores, chipResults } = result;
+        const caller = getPlayer(player.id);
+        if (caller) logYaniv(caller, type, chipResults, scores);
+        else logRaw("🃏 YANIV DECLARED!");
+      });
+
+      socket.on("playerStateUpdate", (states) => {
+        window._allPlayers = states;
+
+        const me = states.find(p => p.id === player.id);
+        if (me) {
+          player.score = me.score;
+          player.chips = me.chips ?? 0;
+        }
+
+        const summary = states.map(p => `${p.name}: ${p.chips}💰 | ${p.score} pts`).join(" | ");
+        const hash = summary + JSON.stringify(states.map(p => p.id + p.chips + p.score));
+        if (hash !== window._lastSummaryHash) {
+          window._lastSummaryHash = hash;
+          logRaw(`👥 ${summary}`);
+        }
       });
 
       socket.on("roundCountdown", ({ seconds }) => showCountdown(seconds));
-      socket.on("waitingForPlayers", ({ roomId }) => log("⏳", "System", `Waiting for players in ${roomId}`));
+      socket.on("waitingForPlayers", ({ roomId }) => logRaw(`⏳ Waiting for players in ${roomId}`));
       socket.on("countdownToStart", ({ seconds }) => showCountdown(seconds));
     };
 
     const joinSelectedRoom = () => {
       const selector = document.getElementById("roomSelector");
       roomId = selector.value;
-      if (!roomId) return log("⚠️", "System", "Please select a room.");
+      if (!roomId) return logRaw("⚠️ Please select a room.");
       socket.emit("joinRoom", { roomId, player });
       setTimeout(() => {
         socket.emit("playerReady", { roomId, playerId: player.id });
-        log("✅", player.name, "Marked as ready");
+        logRaw("✅ Marked as ready");
       }, 500);
     };
 
